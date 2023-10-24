@@ -19,8 +19,7 @@
 #[macro_use]
 extern crate ark_std;
 
-use ark_crypto_primitives::absorb;
-use ark_crypto_primitives::sponge::{Absorb, CryptographicSponge};
+use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ff::{PrimeField, ToConstraintField};
 use ark_poly::{univariate::DensePolynomial, EvaluationDomain, GeneralEvaluationDomain};
 use ark_poly_commit::challenge::ChallengeGenerator;
@@ -32,7 +31,6 @@ use ark_std::rand::RngCore;
 
 use ark_serialize::CanonicalSerialize;
 use ark_std::{
-    boxed::Box,
     collections::BTreeMap,
     format,
     marker::PhantomData,
@@ -69,9 +67,6 @@ pub mod ahp;
 use crate::ahp::prover::ProverMsg;
 pub use ahp::AHPForR1CS;
 use ahp::EvaluationsProvider;
-use ark_nonnative_field::params::OptimizationType;
-
-use crate::ahp::prover::ProverMsg;
 
 #[cfg(test)]
 mod test;
@@ -109,7 +104,7 @@ pub struct Marlin<
     #[doc(hidden)] PhantomData<MC>,
 );
 
-fn compute_vk_hash<F, FSF, PC, S>(vk: &IndexVerifierKey<F, PC>) -> Vec<FSF>
+fn compute_vk_hash<F, FSF, PC, S>(vk: &IndexVerifierKey<F, PC, S>) -> Vec<FSF>
 where
     F: PrimeField,
     FSF: PrimeField,
@@ -118,7 +113,7 @@ where
     S: CryptographicSponge + Default + RngCore,
 {
     let mut vk_hash_rng = S::default();
-    vk_hash_rng.absorb(&vk.index_comms);
+    vk_hash_rng.absorb(&to_bytes(&vk.index_comms));
     vk_hash_rng.squeeze_field_elements(1)
 }
 
@@ -163,7 +158,7 @@ where
     pub fn circuit_specific_setup<C: ConstraintSynthesizer<F>, R: RngCore>(
         c: C,
         rng: &mut R,
-    ) -> Result<(IndexProverKey<F, PC>, IndexVerifierKey<F, PC>), Error<PC::Error>> {
+    ) -> Result<(IndexProverKey<F, PC, S>, IndexVerifierKey<F, PC, S>), Error<PC::Error>> {
         let index_time = start_timer!(|| "Marlin::Index");
 
         let for_recursion = MC::FOR_RECURSION;
@@ -342,15 +337,15 @@ where
 
         let hiding = !for_recursion;
 
+        fs_rng.absorb(&Self::PROTOCOL_NAME);
         if for_recursion {
-            fs_rng.absorb(&to_bytes![&Self::PROTOCOL_NAME].unwrap());
-            fs_rng.absorb(&compute_vk_hash::<F, FSF, PC, S>(
+            fs_rng.absorb(&to_bytes(&compute_vk_hash::<F, FSF, PC, S>(
                 &index_pk.index_vk,
-            ));
-            fs_rng.absorb(&public_input);
+            )));
         } else {
-            fs_rng.absorb(&to_bytes![&Self::PROTOCOL_NAME, &index_pk.index_vk, &public_input].unwrap());
+            fs_rng.absorb(&to_bytes(&index_pk.index_vk));
         }
+        fs_rng.absorb(&to_bytes(&public_input));
 
         // --------------------------------------------------------------------
         // First round
@@ -367,14 +362,18 @@ where
         .map_err(Error::from_pc_err)?;
         end_timer!(first_round_comm_time);
 
+        let fcinput = first_comms
+            .iter()
+            .map(|p| p.commitment().clone())
+            .collect::<Vec<_>>();
+        fs_rng.absorb(&to_bytes(&fcinput));
         if for_recursion {
-            fs_rng.absorb(&first_comms);
             match prover_first_msg.clone() {
                 ProverMsg::EmptyMessage => (),
-                ProverMsg::FieldElements(v) => fs_rng.absorb(&v),
+                ProverMsg::FieldElements(v) => fs_rng.absorb(&to_bytes(&v)),
             }
         } else {
-            fs_rng.absorb_bytes(&to_bytes![first_comms, prover_first_msg].unwrap());
+            fs_rng.absorb(&to_bytes(&prover_first_msg));
         }
 
         let (verifier_first_msg, verifier_state) =
@@ -396,14 +395,18 @@ where
         .map_err(Error::from_pc_err)?;
         end_timer!(second_round_comm_time);
 
+        let scinput = second_comms
+            .iter()
+            .map(|p| p.commitment().clone())
+            .collect::<Vec<_>>();
+        fs_rng.absorb(&to_bytes(&scinput));
         if for_recursion {
-            fs_rng.absorb(&second_comms);
             match prover_second_msg.clone() {
                 ProverMsg::EmptyMessage => (),
-                ProverMsg::FieldElements(v) => fs_rng.absorb(&v);
+                ProverMsg::FieldElements(v) => fs_rng.absorb(&to_bytes(&v))
             }
         } else {
-            fs_rng.absorb(&to_bytes![second_comms, prover_second_msg].unwrap());
+            fs_rng.absorb(&to_bytes(&prover_second_msg));
         }
 
         let (verifier_second_msg, verifier_state) =
@@ -424,14 +427,18 @@ where
         .map_err(Error::from_pc_err)?;
         end_timer!(third_round_comm_time);
 
+        let tcinput = third_comms
+            .iter()
+            .map(|p| p.commitment().clone())
+            .collect::<Vec<_>>();
+        fs_rng.absorb(&to_bytes(&tcinput));
         if for_recursion {
-            fs_rng.absorb(&third_comms);
             match prover_third_msg.clone() {
                 ProverMsg::EmptyMessage => (),
-                ProverMsg::FieldElements(v) => {fs_rng.absorb(&v);
+                ProverMsg::FieldElements(v) => fs_rng.absorb(&to_bytes(&v)),
             }
         } else {
-            fs_rng.absorb_bytes(&to_bytes![third_comms, prover_third_msg].unwrap());
+            fs_rng.absorb(&to_bytes(&prover_third_msg));
         }
 
         let verifier_state = AHPForR1CS::verifier_third_round(verifier_state, &mut fs_rng);
@@ -535,11 +542,7 @@ where
         let evaluations = evaluations_unsorted.iter().map(|x| x.1).collect::<Vec<F>>();
         end_timer!(eval_time);
 
-        if for_recursion {
-            fs_rng.absorb(&evaluations);
-        } else {
-            fs_rng.absorb_bytes(&to_bytes![&evaluations].unwrap());
-        }
+        fs_rng.absorb(&to_bytes(&evaluations));
 
         let mut opening_challenge: ChallengeGenerator<_, S> =
             ChallengeGenerator::new_multivariate(fs_rng);
@@ -591,27 +594,27 @@ where
 
         let mut fs_rng = S::default();
 
+        fs_rng.absorb(&Self::PROTOCOL_NAME);
         if for_recursion {
-            fs_rng.absorb(&to_bytes![&Self::PROTOCOL_NAME].unwrap());
-            fs_rng.absorb(&compute_vk_hash::<F, FSF, PC, S>(index_vk));
-            fs_rng.absorb(&public_input);
+            fs_rng.absorb(&to_bytes(&compute_vk_hash::<F, FSF, PC, S>(index_vk)));
         } else {
             fs_rng
-                .absorb(&to_bytes![&Self::PROTOCOL_NAME, &index_vk, &public_input].unwrap());
+                .absorb(&to_bytes(index_vk));
         }
+        fs_rng.absorb(&to_bytes(&public_input));
 
         // --------------------------------------------------------------------
         // First round
         let first_comms = &proof.commitments[0];
 
+        fs_rng.absorb(&to_bytes(first_comms));
         if for_recursion {
-            fs_rng.absorb(&first_comms);
             match proof.prover_messages[0].clone() {
                 ProverMsg::EmptyMessage => (),
-                ProverMsg::FieldElements(v) => fs_rng.absorb(&v),
+                ProverMsg::FieldElements(v) => fs_rng.absorb(&to_bytes(&v)),
             };
         } else {
-            fs_rng.absorb(&to_bytes![first_comms, proof.prover_messages[0]].unwrap());
+            fs_rng.absorb(&to_bytes(&proof.prover_messages[0]));
         }
 
         let (_, verifier_state) =
@@ -622,14 +625,14 @@ where
         // Second round
         let second_comms = &proof.commitments[1];
 
+        fs_rng.absorb(&to_bytes(second_comms));
         if for_recursion {
-            fs_rng.absorb(&second_comms);
             match proof.prover_messages[1].clone() {
                 ProverMsg::EmptyMessage => (),
-                ProverMsg::FieldElements(v) => fs_rng.absorb(&v),
+                ProverMsg::FieldElements(v) => fs_rng.absorb(&to_bytes(&v)),
             };
         } else {
-            fs_rng.absorb(&to_bytes![second_comms, proof.prover_messages[1]].unwrap());
+            fs_rng.absorb(&to_bytes(&proof.prover_messages[1]));
         }
 
         let (_, verifier_state) = AHPForR1CS::verifier_second_round(verifier_state, &mut fs_rng);
@@ -639,14 +642,14 @@ where
         // Third round
         let third_comms = &proof.commitments[2];
 
+        fs_rng.absorb(&to_bytes(third_comms));
         if for_recursion {
-            fs_rng.absorb(&third_comms);
             match proof.prover_messages[2].clone() {
                 ProverMsg::EmptyMessage => (),
-                ProverMsg::FieldElements(v) => fs_rng.absorb(&v),
+                ProverMsg::FieldElements(v) => fs_rng.absorb(&to_bytes(&v)),
             };
         } else {
-            fs_rng.absorb_bytes(&to_bytes![third_comms, proof.prover_messages[2]].unwrap());
+            fs_rng.absorb(&to_bytes(&proof.prover_messages[2]));
         }
 
         let verifier_state = AHPForR1CS::verifier_third_round(verifier_state, &mut fs_rng);
@@ -684,11 +687,7 @@ where
         let (query_set, verifier_state) =
             AHPForR1CS::verifier_query_set(verifier_state, &mut fs_rng, for_recursion);
 
-        if for_recursion {
-            fs_rng.absorb(&proof.evaluations);
-        } else {
-            fs_rng.absorb(&to_bytes![&proof.evaluations].unwrap());
-        }
+        fs_rng.absorb(&to_bytes(&proof.evaluations));
         let mut opening_challenge: ChallengeGenerator<F, S> =
             ChallengeGenerator::new_multivariate(fs_rng);
 
@@ -737,11 +736,12 @@ where
         Ok(evaluations_are_correct)
     }
 
-    pub fn prepared_verify(
-        prepared_vk: &PreparedIndexVerifierKey<F, PC, S>,
+    pub fn prepared_verify<R: RngCore>(
+        prepared_vk: &PreparedIndexVerifierKey<F, S, PC>,
         public_input: &[F],
         proof: &Proof<F, PC, S>,
+        rng: &mut R,
     ) -> Result<bool, Error<PC::Error>> {
-        Self::verify(&prepared_vk.orig_vk, public_input, proof)
+        Self::verify(&prepared_vk.orig_vk, public_input, proof, rng)
     }
 }

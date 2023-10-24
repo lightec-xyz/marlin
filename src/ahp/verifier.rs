@@ -6,9 +6,7 @@ use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_std::rand::RngCore;
 use itertools::Itertools;
 
-use crate::fiat_shamir::FiatShamirRng;
 use ark_ff::PrimeField;
-use ark_nonnative_field::params::OptimizationType;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_poly_commit::QuerySet;
 
@@ -47,7 +45,7 @@ impl<F: PrimeField> AHPForR1CS<F> {
     /// Output the first message and next round state.
     pub fn verifier_first_round<R: CryptographicSponge + RngCore>(
         index_info: IndexInfo<F>,
-        fs_rng: &mut R,
+        rng: &mut R,
     ) -> Result<(VerifierFirstMsg<F>, VerifierState<F>), Error> {
         if index_info.num_constraints != index_info.num_variables {
             return Err(Error::NonSquareMatrix);
@@ -87,14 +85,11 @@ impl<F: PrimeField> AHPForR1CS<F> {
     }
 
     /// Output the second message and next round state.
-    pub fn verifier_second_round<FSF: PrimeField, R: FiatShamirRng<F, FSF>>(
+    pub fn verifier_second_round<R: RngCore>(
         mut state: VerifierState<F>,
-        fs_rng: &mut R,
+        rng: &mut R,
     ) -> (VerifierSecondMsg<F>, VerifierState<F>) {
-        let elems = fs_rng.squeeze_nonnative_field_elements(1, OptimizationType::Weight);
-        let beta = elems[0];
-        assert!(!state.domain_h.evaluate_vanishing_polynomial(beta).is_zero());
-
+        let beta = state.domain_h.sample_element_outside_domain(rng);
         let msg = VerifierSecondMsg { beta };
         state.second_round_msg = Some(msg);
 
@@ -104,7 +99,7 @@ impl<F: PrimeField> AHPForR1CS<F> {
     /// Output the third message and next round state.
     pub fn verifier_third_round<R: CryptographicSponge>(
         mut state: VerifierState<F>,
-        fs_rng: &mut R,
+        rng: &mut R,
     ) -> VerifierState<F> {
         let gamma = rng.squeeze_field_elements(1).pop();
         state.gamma = gamma;
@@ -112,7 +107,7 @@ impl<F: PrimeField> AHPForR1CS<F> {
     }
 
     /// Output the query state and next round state.
-    pub fn verifier_query_set<'a, FSF: PrimeField, R: FiatShamirRng<F, FSF>>(
+    pub fn verifier_query_set<'a, R: RngCore>(
         state: VerifierState<F>,
         _: &'a mut R,
         with_vanishing: bool,

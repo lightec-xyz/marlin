@@ -69,7 +69,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for DummyCircuit<F> {
 }
 
 macro_rules! marlin_prove_bench {
-    ($bench_name:ident, $bench_field:ty, $bench_pairing_engine:ty) => {
+    ($bench_name:ident, $bench_field:ty, $base_field:ty, $bench_pairing_engine:ty) => {
         let mut rng_seed = ark_std::test_rng();
         let mut rng: SimplePoseidonRng<$bench_field> = SimplePoseidonRng::default();
         rng.absorb(&rng_seed.next_u64());
@@ -88,6 +88,7 @@ macro_rules! marlin_prove_bench {
 
         let srs = Marlin::<
             $bench_field,
+            $base_field,
             SonicKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
@@ -99,6 +100,7 @@ macro_rules! marlin_prove_bench {
         .unwrap();
         let (pk, _) = Marlin::<
             $bench_field,
+            $base_field,
             SonicKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
@@ -114,6 +116,7 @@ macro_rules! marlin_prove_bench {
         for _ in 0..NUM_PROVE_REPEATITIONS {
             let _ = Marlin::<
                 $bench_field,
+                $base_field,
                 SonicKZG10<
                     $bench_pairing_engine,
                     DensePolynomial<$bench_field>,
@@ -134,7 +137,7 @@ macro_rules! marlin_prove_bench {
 }
 
 macro_rules! marlin_verify_bench {
-    ($bench_name:ident, $bench_field:ty, $bench_pairing_engine:ty) => {
+    ($bench_name:ident, $bench_field:ty, $base_field:ty, $bench_pairing_engine:ty) => {
         let mut rng_seed = ark_std::test_rng();
         let mut rng: SimplePoseidonRng<$bench_field> = SimplePoseidonRng::default();
         rng.absorb(&rng_seed.next_u64());
@@ -153,6 +156,7 @@ macro_rules! marlin_verify_bench {
 
         let srs = Marlin::<
             $bench_field,
+            $base_field,
             SonicKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
@@ -164,6 +168,7 @@ macro_rules! marlin_verify_bench {
         .unwrap();
         let (pk, vk) = Marlin::<
             $bench_field,
+            $base_field,
             SonicKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
@@ -175,6 +180,7 @@ macro_rules! marlin_verify_bench {
         .unwrap();
         let proof = Marlin::<
             $bench_field,
+            $base_field,
             SonicKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
@@ -192,6 +198,7 @@ macro_rules! marlin_verify_bench {
         for _ in 0..NUM_VERIFY_REPEATITIONS {
             let _ = Marlin::<
                 $bench_field,
+                $base_field,
                 SonicKZG10<
                     $bench_pairing_engine,
                     DensePolynomial<$bench_field>,

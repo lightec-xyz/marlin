@@ -10,11 +10,8 @@ use ark_poly_commit::{
     BatchLCProof, PolynomialCommitment,
 };
 use ark_relations::r1cs::SynthesisError;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
-use ark_std::{
-    format,
-    io::{Read, Write},
-};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::format;
 
 /* ************************************************************************* */
 /* ************************************************************************* */
@@ -70,7 +67,7 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
 /* ************************************************************************* */
 
 /// Verification key, prepared (preprocessed) for use in pairings.
-pub struct PreparedIndexVerifierKey<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>>>
+pub struct PreparedIndexVerifierKey<F: PrimeField, S: CryptographicSponge, PC: PolynomialCommitment<F, DensePolynomial<F>, S>>
 {
     /// Size of the variable domain.
     pub domain_h_size: u64,
@@ -83,13 +80,14 @@ pub struct PreparedIndexVerifierKey<F: PrimeField, PC: PolynomialCommitment<F, D
     /// Non-prepared verification key, for use in native "prepared verify" (which
     /// is actually standard verify), as well as in absorbing the original vk into
     /// the Fiat-Shamir sponge.
-    pub orig_vk: IndexVerifierKey<F, PC>,
+    pub orig_vk: IndexVerifierKey<F, PC, S>,
 }
 
-impl<F, PC> Clone for PreparedIndexVerifierKey<F, PC>
+impl<F, S, PC> Clone for PreparedIndexVerifierKey<F, S, PC>
 where
     F: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
+    S: CryptographicSponge,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
 {
     fn clone(&self) -> Self {
         PreparedIndexVerifierKey {
@@ -102,12 +100,13 @@ where
     }
 }
 
-impl<F, PC> PreparedIndexVerifierKey<F, PC>
+impl<F, S, PC> PreparedIndexVerifierKey<F, S, PC>
 where
     F: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
+    S: CryptographicSponge,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
 {
-    pub fn prepare(vk: &IndexVerifierKey<F, PC>) -> Self {
+    pub fn prepare(vk: &IndexVerifierKey<F, PC, S>) -> Self {
         let mut prepared_index_comms = Vec::<PC::PreparedCommitment>::new();
         for (_, comm) in vk.index_comms.iter().enumerate() {
             prepared_index_comms.push(PC::PreparedCommitment::prepare(comm));
@@ -218,7 +217,6 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
         let mut num_comms_with_degree_bounds = 0;
         let mut size_bytes_comms_without_degree_bounds = 0;
         let mut size_bytes_comms_with_degree_bounds = 0;
-        let mut size_bytes_proofs = 0;
         for c in self.commitments.iter().flatten() {
             if !c.has_degree_bound() {
                 num_comms_without_degree_bounds += 1;
@@ -273,7 +271,9 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
     }
 }
 
-impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>>> Clone for Proof<F, PC> {
+impl<F: PrimeField, S: CryptographicSponge, PC: PolynomialCommitment<F, DensePolynomial<F>, S>>
+    Clone for Proof<F, PC, S>
+{
     fn clone(&self) -> Self {
         Proof {
             commitments: self.commitments.clone(),
