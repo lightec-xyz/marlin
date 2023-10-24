@@ -26,13 +26,20 @@ ark-ec = { version = "^0.4.0", default-features = false }
 ark-std = { version = "^0.4.0", default-features = false }
 ark-poly = { version = "^0.4.0", default-features = false }
 ark-relations = { version = "^0.4.0", default-features = false }
-ark-poly-commit = { version = "^0.4.0", default-features = false }
+# ark-poly-commit = { version = "^0.4.0", default-features = false }
+ark-poly-commit = { git = "https://github.com/lightec/poly-commit", branch = "master", default-features = false, features = [ "r1cs" ] }
 ark-crypto-primitives = { version = "^0.4.0", default-features = false, features = [ "r1cs" ] }
+
+ark-r1cs-std = { version = "^0.4.0", default-features = false }
+ark-snark = { version = "^0.4.0", default-features = false }
 
 rayon = { version = "1", optional = true }
 digest = { version = "0.9" }
 derivative = { version = "2", features = ["use_core"] }
 itertools = "0.11.0"
+hashbrown = "0.9"
+tracing = { version = "0.1", default-features = false, features = [ "attributes" ] }
+tracing-subscriber = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
 rand_chacha = { version = "^0.3.0", default-features = false }
@@ -62,7 +69,7 @@ panic = 'abort'
 
 [features]
 default = ["std", "parallel"]
-std = [ "ark-ff/std", "ark-poly/std", "ark-relations/std", "ark-std/std", "ark-serialize/std", "ark-poly-commit/std" ]
+std = [ "ark-crypto-primitives/std", "tracing-subscriber", "ark-ff/std", "ark-poly/std", "ark-relations/std", "ark-std/std", "ark-serialize/std", "ark-poly-commit/std" ]
 print-trace = [ "ark-std/print-trace" ]
 parallel = [ "std", "ark-ff/parallel", "ark-poly/parallel", "ark-std/parallel", "ark-poly-commit/parallel", "rayon" ]
 

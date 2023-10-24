@@ -4,9 +4,17 @@ use crate::Vec;
 use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ff::PrimeField;
 use ark_poly::univariate::DensePolynomial;
-use ark_poly_commit::{BatchLCProof, PolynomialCommitment};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::format;
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+use ark_poly_commit::{
+    data_structures::{PCPreparedCommitment, PCPreparedVerifierKey},
+    BatchLCProof, PolynomialCommitment,
+};
+use ark_relations::r1cs::SynthesisError;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
+use ark_std::{
+    format,
+    io::{Read, Write},
+};
 
 /* ************************************************************************* */
 /* ************************************************************************* */
@@ -42,7 +50,7 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
     fn clone(&self) -> Self {
         Self {
             index_comms: self.index_comms.clone(),
-            index_info: self.index_info.clone(),
+            index_info: self.index_info,
             verifier_key: self.verifier_key.clone(),
         }
     }
@@ -54,6 +62,76 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
     /// Iterate over the commitments to indexed polynomials in `self`.
     pub fn iter(&self) -> impl Iterator<Item = &PC::Commitment> {
         self.index_comms.iter()
+    }
+}
+
+/* ************************************************************************* */
+/* ************************************************************************* */
+/* ************************************************************************* */
+
+/// Verification key, prepared (preprocessed) for use in pairings.
+pub struct PreparedIndexVerifierKey<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>>>
+{
+    /// Size of the variable domain.
+    pub domain_h_size: u64,
+    /// Size of the matrix domain.
+    pub domain_k_size: u64,
+    /// Commitments to the index polynomials, prepared.
+    pub prepared_index_comms: Vec<PC::PreparedCommitment>,
+    /// Prepared version of the poly-commit scheme's verification key.
+    pub prepared_verifier_key: PC::PreparedVerifierKey,
+    /// Non-prepared verification key, for use in native "prepared verify" (which
+    /// is actually standard verify), as well as in absorbing the original vk into
+    /// the Fiat-Shamir sponge.
+    pub orig_vk: IndexVerifierKey<F, PC>,
+}
+
+impl<F, PC> Clone for PreparedIndexVerifierKey<F, PC>
+where
+    F: PrimeField,
+    PC: PolynomialCommitment<F, DensePolynomial<F>>,
+{
+    fn clone(&self) -> Self {
+        PreparedIndexVerifierKey {
+            domain_h_size: self.domain_h_size,
+            domain_k_size: self.domain_k_size,
+            prepared_index_comms: self.prepared_index_comms.clone(),
+            prepared_verifier_key: self.prepared_verifier_key.clone(),
+            orig_vk: self.orig_vk.clone(),
+        }
+    }
+}
+
+impl<F, PC> PreparedIndexVerifierKey<F, PC>
+where
+    F: PrimeField,
+    PC: PolynomialCommitment<F, DensePolynomial<F>>,
+{
+    pub fn prepare(vk: &IndexVerifierKey<F, PC>) -> Self {
+        let mut prepared_index_comms = Vec::<PC::PreparedCommitment>::new();
+        for (_, comm) in vk.index_comms.iter().enumerate() {
+            prepared_index_comms.push(PC::PreparedCommitment::prepare(comm));
+        }
+
+        let prepared_verifier_key = PC::PreparedVerifierKey::prepare(&vk.verifier_key);
+
+        let domain_h = GeneralEvaluationDomain::<F>::new(vk.index_info.num_constraints)
+            .ok_or(SynthesisError::PolynomialDegreeTooLarge)
+            .unwrap();
+        let domain_k = GeneralEvaluationDomain::<F>::new(vk.index_info.num_non_zero)
+            .ok_or(SynthesisError::PolynomialDegreeTooLarge)
+            .unwrap();
+
+        let domain_h_size = domain_h.size();
+        let domain_k_size = domain_k.size();
+
+        Self {
+            domain_h_size: domain_h_size as u64,
+            domain_k_size: domain_k_size as u64,
+            prepared_index_comms,
+            prepared_verifier_key,
+            orig_vk: vk.clone(),
+        }
     }
 }
 
@@ -140,7 +218,8 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
         let mut num_comms_with_degree_bounds = 0;
         let mut size_bytes_comms_without_degree_bounds = 0;
         let mut size_bytes_comms_with_degree_bounds = 0;
-        for c in self.commitments.iter().flat_map(|c| c) {
+        let mut size_bytes_proofs = 0;
+        for c in self.commitments.iter().flatten() {
             if !c.has_degree_bound() {
                 num_comms_without_degree_bounds += 1;
                 size_bytes_comms_without_degree_bounds += c.compressed_size();
@@ -161,7 +240,7 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
             .iter()
             .map(|v| match v {
                 ProverMsg::EmptyMessage => 0,
-                ProverMsg::FieldElements(elems) => elems.len(),
+                ProverMsg::FieldElements(v) => v.len(),
             })
             .sum();
         let prover_msg_size_in_bytes = self.prover_messages.compressed_size();
@@ -191,5 +270,16 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
             prover_msg_size_in_bytes,
         );
         add_to_trace!(|| "Statistics about proof", || stats);
+    }
+}
+
+impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>>> Clone for Proof<F, PC> {
+    fn clone(&self) -> Self {
+        Proof {
+            commitments: self.commitments.clone(),
+            evaluations: self.evaluations.clone(),
+            prover_messages: self.prover_messages.clone(),
+            pc_proof: self.pc_proof.clone(),
+        }
     }
 }
