@@ -36,13 +36,9 @@ impl<F: PrimeField> AHPForR1CS<F> {
     ];
 
     #[rustfmt::skip]
-    pub const INDEXER_POLYNOMIALS_WITH_VANISHING: [&'static str; 14] = [
-        // Polynomials for A
-        "a_row", "a_col", "a_val", "a_row_col",
-        // Polynomials for B
-        "b_row", "b_col", "b_val", "b_row_col",
-        // Polynomials for C
-        "c_row", "c_col", "c_val", "c_row_col",
+    pub const INDEXER_POLYNOMIALS_WITH_VANISHING: [&'static str; 8] = [
+        // Polynomials for M
+        "row", "col", "a_val", "b_val", "c_val", "row_col",
         // Vanishing polynomials
         "vanishing_poly_h", "vanishing_poly_k"
     ];
@@ -104,7 +100,7 @@ impl<F: PrimeField> AHPForR1CS<F> {
             3 * domain_h_size + 2 * zk_bound - 3, //  mask_poly
             domain_h_size,
             domain_h_size,
-            domain_k_size - 1,
+            domain_k_size,
         ]
         .iter()
         .max()

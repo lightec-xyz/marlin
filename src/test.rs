@@ -245,7 +245,7 @@ mod marlin_recursion {
         let mut rng: SimplePoseidonRng<Fr> = SimplePoseidonRng::default();
         rng.absorb(&rng_seed.next_u64());
 
-        let universal_srs = MarlinInst::universal_setup(100, 25, 100, &mut rng).unwrap();
+        let universal_srs = MarlinInst::universal_setup(100, 25, 300, &mut rng).unwrap();
 
         for _ in 0..100 {
             let (a, b) = rng
