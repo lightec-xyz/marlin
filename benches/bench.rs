@@ -13,12 +13,12 @@ use ark_mnt4_753::{Fq as MNT4BigFq, Fr as MNT4BigFr, MNT4_753};
 use ark_mnt6_298::{Fq as MNT6Fq, Fr as MNT6Fr, MNT6_298};
 use ark_mnt6_753::{Fq as MNT6BigFq, Fr as MNT6BigFr, MNT6_753};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly_commit::sonic_pc::SonicKZG10;
+use ark_poly_commit::marlin_pc::MarlinKZG10;
 use ark_relations::{
     lc,
     r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
 };
-use ark_std::{ops::Mul, rand::RngCore};
+use ark_std::rand::RngCore;
 use itertools::Itertools;
 
 const NUM_PROVE_REPEATITIONS: usize = 10;
@@ -89,7 +89,7 @@ macro_rules! marlin_prove_bench {
         let srs = Marlin::<
             $bench_field,
             $base_field,
-            SonicKZG10<
+            MarlinKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
                 SimplePoseidonRng<$bench_field>,
@@ -101,7 +101,7 @@ macro_rules! marlin_prove_bench {
         let (pk, _) = Marlin::<
             $bench_field,
             $base_field,
-            SonicKZG10<
+            MarlinKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
                 SimplePoseidonRng<$bench_field>,
@@ -117,7 +117,7 @@ macro_rules! marlin_prove_bench {
             let _ = Marlin::<
                 $bench_field,
                 $base_field,
-                SonicKZG10<
+                MarlinKZG10<
                     $bench_pairing_engine,
                     DensePolynomial<$bench_field>,
                     SimplePoseidonRng<$bench_field>,
@@ -157,7 +157,7 @@ macro_rules! marlin_verify_bench {
         let srs = Marlin::<
             $bench_field,
             $base_field,
-            SonicKZG10<
+            MarlinKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
                 SimplePoseidonRng<$bench_field>,
@@ -169,7 +169,7 @@ macro_rules! marlin_verify_bench {
         let (pk, vk) = Marlin::<
             $bench_field,
             $base_field,
-            SonicKZG10<
+            MarlinKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
                 SimplePoseidonRng<$bench_field>,
@@ -181,7 +181,7 @@ macro_rules! marlin_verify_bench {
         let proof = Marlin::<
             $bench_field,
             $base_field,
-            SonicKZG10<
+            MarlinKZG10<
                 $bench_pairing_engine,
                 DensePolynomial<$bench_field>,
                 SimplePoseidonRng<$bench_field>,
@@ -191,7 +191,7 @@ macro_rules! marlin_verify_bench {
         >::prove(&pk, c.clone(), &mut rng)
         .unwrap();
 
-        let v = c.a.unwrap().mul(c.b.unwrap());
+        let v = a * b;
 
         let start = ark_std::time::Instant::now();
 
@@ -199,7 +199,7 @@ macro_rules! marlin_verify_bench {
             let _ = Marlin::<
                 $bench_field,
                 $base_field,
-                SonicKZG10<
+                MarlinKZG10<
                     $bench_pairing_engine,
                     DensePolynomial<$bench_field>,
                     SimplePoseidonRng<$bench_field>,
