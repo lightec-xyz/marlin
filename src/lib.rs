@@ -722,7 +722,7 @@ where
             &evaluations,
             &proof.pc_proof,
             &mut opening_challenge,
-            rng,
+            Some(rng),
         )
         .map_err(Error::from_pc_err)?;
 
@@ -737,7 +737,7 @@ where
     }
 
     pub fn prepared_verify<R: RngCore>(
-        prepared_vk: &PreparedIndexVerifierKey<F, S, PC>,
+        prepared_vk: &PreparedIndexVerifierKey<F, PC, S>,
         public_input: &[F],
         proof: &Proof<F, PC, S>,
         rng: &mut R,

@@ -67,7 +67,12 @@ impl<F: PrimeField, PC: PolynomialCommitment<F, DensePolynomial<F>, S>, S: Crypt
 /* ************************************************************************* */
 
 /// Verification key, prepared (preprocessed) for use in pairings.
-pub struct PreparedIndexVerifierKey<F: PrimeField, S: CryptographicSponge, PC: PolynomialCommitment<F, DensePolynomial<F>, S>>
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct PreparedIndexVerifierKey<F, PC, S>
+where
+    F: PrimeField,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+    S: CryptographicSponge,
 {
     /// Size of the variable domain.
     pub domain_h_size: u64,
@@ -83,7 +88,7 @@ pub struct PreparedIndexVerifierKey<F: PrimeField, S: CryptographicSponge, PC: P
     pub orig_vk: IndexVerifierKey<F, PC, S>,
 }
 
-impl<F, S, PC> Clone for PreparedIndexVerifierKey<F, S, PC>
+impl<F, S, PC> Clone for PreparedIndexVerifierKey<F, PC, S>
 where
     F: PrimeField,
     S: CryptographicSponge,
@@ -100,7 +105,7 @@ where
     }
 }
 
-impl<F, S, PC> PreparedIndexVerifierKey<F, S, PC>
+impl<F, S, PC> PreparedIndexVerifierKey<F, PC, S>
 where
     F: PrimeField,
     S: CryptographicSponge,

@@ -1,7 +1,6 @@
 use crate::{constraints::polynomial::AlgebraForAHP, PrimeField, SynthesisError, Vec};
 use ark_ff::{batch_inversion, Field};
-use ark_nonnative_field::NonNativeFieldVar;
-use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::FieldVar, R1CSVar};
+use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{FieldVar, nonnative::NonNativeFieldVar}, R1CSVar};
 
 pub struct LagrangeInterpolator<F: PrimeField> {
     all_domain_elems: Vec<F>,

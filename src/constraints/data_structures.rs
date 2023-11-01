@@ -2,17 +2,16 @@ use crate::ahp::prover::ProverMsg;
 use crate::{
     constraints::verifier::Marlin as MarlinVerifierVar,
     data_structures::{IndexVerifierKey, PreparedIndexVerifierKey, Proof},
-    fiat_shamir::{constraints::FiatShamirRngVar, FiatShamirRng},
     PhantomData, PrimeField, String, SynthesisError, ToString, Vec,
 };
-use ark_ff::{to_bytes, ToConstraintField};
-use ark_nonnative_field::NonNativeFieldVar;
+use ark_ff::ToConstraintField;
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_poly_commit::{PCCheckVar, PolynomialCommitment, PrepareGadget};
+use ark_crypto_primitives::sponge::{CryptographicSponge, constraints::CryptographicSpongeVar};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
-    fields::fp::FpVar,
+    fields::{fp::FpVar, nonnative::NonNativeFieldVar},
     uint8::UInt8,
     R1CSVar, ToBytesGadget, ToConstraintFieldGadget,
 };
@@ -20,13 +19,14 @@ use ark_relations::r1cs::{ConstraintSystemRef, Namespace};
 use ark_std::borrow::Borrow;
 use hashbrown::HashMap;
 
-pub type UniversalSRS<F, PC> = <PC as PolynomialCommitment<F, DensePolynomial<F>>>::UniversalParams;
+pub type UniversalSRS<F, PC, S> = <PC as PolynomialCommitment<F, DensePolynomial<F>, S>>::UniversalParams;
 
 pub struct IndexVerifierKeyVar<
     F: PrimeField,
     CF: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
-    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+    S: CryptographicSponge,
 > {
     pub cs: ConstraintSystemRef<CF>,
     pub domain_h_size: u64,
@@ -40,9 +40,10 @@ pub struct IndexVerifierKeyVar<
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    > IndexVerifierKeyVar<F, CF, PC, PCG>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+    > IndexVerifierKeyVar<F, CF, PC, PCG, S>
 {
     fn cs(&self) -> ConstraintSystemRef<CF> {
         self.cs.clone()
@@ -52,9 +53,10 @@ impl<
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    > AllocVar<IndexVerifierKey<F, PC>, CF> for IndexVerifierKeyVar<F, CF, PC, PCG>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+    > AllocVar<IndexVerifierKey<F, PC, S>, CF> for IndexVerifierKeyVar<F, CF, PC, PCG, S>
 {
     #[tracing::instrument(target = "r1cs", skip(cs, f))]
     fn new_variable<T>(
@@ -63,7 +65,7 @@ impl<
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError>
     where
-        T: Borrow<IndexVerifierKey<F, PC>>,
+        T: Borrow<IndexVerifierKey<F, PC, S>>,
     {
         let t = f()?;
         let ivk = t.borrow();
@@ -117,9 +119,10 @@ impl<
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    > ToBytesGadget<CF> for IndexVerifierKeyVar<F, CF, PC, PCG>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+    > ToBytesGadget<CF> for IndexVerifierKeyVar<F, CF, PC, PCG, S>
 {
     #[tracing::instrument(target = "r1cs", skip(self))]
     fn to_bytes(&self) -> Result<Vec<UInt8<CF>>, SynthesisError> {
@@ -140,9 +143,10 @@ impl<
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    > Clone for IndexVerifierKeyVar<F, CF, PC, PCG>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+    > Clone for IndexVerifierKeyVar<F, CF, PC, PCG, S>
 {
     fn clone(&self) -> Self {
         Self {
@@ -160,9 +164,10 @@ impl<
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    > IndexVerifierKeyVar<F, CF, PC, PCG>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+    > IndexVerifierKeyVar<F, CF, PC, PCG, S>
 {
     pub fn iter(&self) -> impl Iterator<Item = &PCG::CommitmentVar> {
         self.index_comms.iter()
@@ -172,10 +177,10 @@ impl<
 pub struct PreparedIndexVerifierKeyVar<
     F: PrimeField,
     CF: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
-    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    PR: FiatShamirRng<F, CF>,
-    R: FiatShamirRngVar<F, CF, PR>,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+    S: CryptographicSponge,
+    SV: CryptographicSpongeVar<CF, S>,
 > {
     pub cs: ConstraintSystemRef<CF>,
     pub domain_h_size: u64,
@@ -184,19 +189,19 @@ pub struct PreparedIndexVerifierKeyVar<
     pub domain_k_size_gadget: FpVar<CF>,
     pub prepared_index_comms: Vec<PCG::PreparedCommitmentVar>,
     pub prepared_verifier_key: PCG::PreparedVerifierKeyVar,
-    pub fs_rng: R,
+    pub fs_rng: SV,
 
-    pr: PhantomData<PR>,
+    pr: PhantomData<S>,
 }
 
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-        PR: FiatShamirRng<F, CF>,
-        R: FiatShamirRngVar<F, CF, PR>,
-    > Clone for PreparedIndexVerifierKeyVar<F, CF, PC, PCG, PR, R>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+        SV: CryptographicSpongeVar<CF, S>,
+        > Clone for PreparedIndexVerifierKeyVar<F, CF, PC, PCG, S, SV>
 {
     fn clone(&self) -> Self {
         PreparedIndexVerifierKeyVar {
@@ -213,27 +218,27 @@ impl<
     }
 }
 
-impl<F, CF, PC, PCG, PR, R> PreparedIndexVerifierKeyVar<F, CF, PC, PCG, PR, R>
+impl<F, CF, PC, PCG, S, SV> PreparedIndexVerifierKeyVar<F, CF, PC, PCG, S, SV>
 where
     F: PrimeField,
     CF: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
-    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    PR: FiatShamirRng<F, CF>,
-    R: FiatShamirRngVar<F, CF, PR>,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+    S: CryptographicSponge + Default,
+    SV: CryptographicSpongeVar<CF, S>,
     PCG::VerifierKeyVar: ToConstraintFieldGadget<CF>,
     PCG::CommitmentVar: ToConstraintFieldGadget<CF>,
 {
     #[tracing::instrument(target = "r1cs", skip(vk))]
-    pub fn prepare(vk: &IndexVerifierKeyVar<F, CF, PC, PCG>) -> Result<Self, SynthesisError> {
+    pub fn prepare(vk: &IndexVerifierKeyVar<F, CF, PC, PCG, S>) -> Result<Self, SynthesisError> {
         let cs = vk.cs();
 
-        let mut fs_rng_raw = PR::new();
+        let mut fs_rng_raw = S::default();
         fs_rng_raw
-            .absorb_bytes(&to_bytes![&MarlinVerifierVar::<F, CF, PC, PCG>::PROTOCOL_NAME].unwrap());
+            .absorb(&MarlinVerifierVar::<F, CF, PC, PCG, S, SV>::PROTOCOL_NAME);
 
         let index_vk_hash = {
-            let mut vk_hash_rng = PR::new();
+            let mut vk_hash_rng = S::default();
 
             let mut vk_elems = Vec::<CF>::new();
             vk.index_comms.iter().for_each(|index_comm| {
@@ -254,7 +259,7 @@ where
         };
 
         let fs_rng = {
-            let mut fs_rng = R::constant(cs, &fs_rng_raw);
+            let mut fs_rng = SV::constant(cs, &fs_rng_raw);
             fs_rng.absorb_native_field_elements(&[index_vk_hash])?;
             fs_rng
         };
@@ -280,15 +285,15 @@ where
     }
 }
 
-impl<F, CF, PC, PCG, PR, R> AllocVar<PreparedIndexVerifierKey<F, PC>, CF>
-    for PreparedIndexVerifierKeyVar<F, CF, PC, PCG, PR, R>
+impl<F, CF, PC, PCG, S, SV> AllocVar<PreparedIndexVerifierKey<F, PC, S>, CF>
+    for PreparedIndexVerifierKeyVar<F, CF, PC, PCG, S, SV>
 where
     F: PrimeField,
     CF: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
-    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    PR: FiatShamirRng<F, CF>,
-    R: FiatShamirRngVar<F, CF, PR>,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+    S: CryptographicSponge + Default,
+    SV: CryptographicSpongeVar<CF, S>,
     PC::VerifierKey: ToConstraintField<CF>,
     PC::Commitment: ToConstraintField<CF>,
     PCG::VerifierKeyVar: ToConstraintFieldGadget<CF>,
@@ -301,7 +306,7 @@ where
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError>
     where
-        T: Borrow<PreparedIndexVerifierKey<F, PC>>,
+        T: Borrow<PreparedIndexVerifierKey<F, PC, S>>,
     {
         let t = f()?;
         let obj = t.borrow();
@@ -330,7 +335,7 @@ where
         });
 
         let index_vk_hash = {
-            let mut vk_hash_rng = PR::new();
+            let mut vk_hash_rng = S::default();
 
             vk_hash_rng.absorb_native_field_elements(&vk_elems);
             FpVar::<CF>::new_variable(
@@ -341,12 +346,12 @@ where
             .unwrap()
         };
 
-        let mut fs_rng_raw = PR::new();
+        let mut fs_rng_raw = S::default();
         fs_rng_raw
-            .absorb_bytes(&to_bytes![&MarlinVerifierVar::<F, CF, PC, PCG>::PROTOCOL_NAME].unwrap());
+            .absorb(&MarlinVerifierVar::<F, CF, PC, PCG, S, SV>::PROTOCOL_NAME);
 
         let fs_rng = {
-            let mut fs_rng = R::constant(cs.clone(), &fs_rng_raw);
+            let mut fs_rng = SV::constant(cs.clone(), &fs_rng_raw);
             fs_rng.absorb_native_field_elements(&[index_vk_hash])?;
             fs_rng
         };
@@ -379,8 +384,9 @@ where
 pub struct ProofVar<
     F: PrimeField,
     CF: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
-    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+    S: CryptographicSponge,
 > {
     pub cs: ConstraintSystemRef<CF>,
     pub commitments: Vec<Vec<PCG::CommitmentVar>>,
@@ -392,9 +398,10 @@ pub struct ProofVar<
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    > ProofVar<F, CF, PC, PCG>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+    > ProofVar<F, CF, PC, PCG, S>
 {
     pub fn new(
         cs: ConstraintSystemRef<CF>,
@@ -413,16 +420,17 @@ impl<
     }
 }
 
-impl<F, CF, PC, PCG> AllocVar<Proof<F, PC>, CF> for ProofVar<F, CF, PC, PCG>
+impl<F, CF, PC, PCG, S> AllocVar<Proof<F, PC, S>, CF> for ProofVar<F, CF, PC, PCG, S>
 where
     F: PrimeField,
     CF: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
-    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
     PC::VerifierKey: ToConstraintField<CF>,
     PC::Commitment: ToConstraintField<CF>,
     PCG::VerifierKeyVar: ToConstraintFieldGadget<CF>,
     PCG::CommitmentVar: ToConstraintFieldGadget<CF>,
+    S: CryptographicSponge,
 {
     #[tracing::instrument(target = "r1cs", skip(cs, f))]
     fn new_variable<T>(
@@ -431,7 +439,7 @@ where
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError>
     where
-        T: Borrow<Proof<F, PC>>,
+        T: Borrow<Proof<F, PC, S>>,
     {
         let ns = cs.into();
         let cs = ns.cs();
@@ -534,9 +542,10 @@ where
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    > Clone for ProofVar<F, CF, PC, PCG>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+    > Clone for ProofVar<F, CF, PC, PCG, S>
 {
     fn clone(&self) -> Self {
         ProofVar {

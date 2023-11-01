@@ -16,12 +16,11 @@ mod tests {
     use ark_ff::{Field, UniformRand};
     use ark_mnt4_298::{constraints::PairingVar as MNT4PairingVar, Fq, Fr, MNT4_298};
     use ark_mnt6_298::MNT6_298;
-    use ark_nonnative_field::NonNativeFieldVar;
     use ark_poly::univariate::DensePolynomial;
     use ark_poly_commit::marlin_pc::{
         BatchLCProofVar, CommitmentVar, MarlinKZG10, MarlinKZG10Gadget,
     };
-    use ark_r1cs_std::{alloc::AllocVar, bits::boolean::Boolean, eq::EqGadget};
+    use ark_r1cs_std::{alloc::AllocVar, bits::boolean::Boolean, eq::EqGadget, fields::nonnative::NonNativeFieldVar};
     use ark_relations::r1cs::OptimizationGoal;
     use ark_relations::{
         lc, ns,
@@ -33,8 +32,8 @@ mod tests {
     #[derive(Copy, Clone, Debug)]
     struct MNT298Cycle;
     impl CurveCycle for MNT298Cycle {
-        type E1 = <MNT6_298 as PairingEngine>::G1Affine;
-        type E2 = <MNT4_298 as PairingEngine>::G1Affine;
+        type E1 = <MNT6_298 as Pairing>::G1;
+        type E2 = <MNT4_298 as Pairing>::G1;
     }
     impl PairingFriendlyCycle for MNT298Cycle {
         type Engine1 = MNT6_298;
