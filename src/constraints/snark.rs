@@ -174,7 +174,7 @@ where
     S: CryptographicSponge + Default + RngCore,
     MC: MarlinConfig,
     PCG: PCCheckVar<F, DensePolynomial<F>, PC, FSF, S>,
-    SV: CryptographicSpongeVar<FSF, S>,
+    SV: CryptographicSpongeVar<FSF, S> + Default,
     PC::VerifierKey: ToConstraintField<FSF>,
     PC::Commitment: ToConstraintField<FSF>,
     PCG::VerifierKeyVar: ToConstraintFieldGadget<FSF>,

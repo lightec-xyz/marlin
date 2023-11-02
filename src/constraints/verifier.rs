@@ -36,7 +36,7 @@ where
     PCG::VerifierKeyVar: ToConstraintFieldGadget<CF>,
     PCG::CommitmentVar: ToConstraintFieldGadget<CF>,
     S: CryptographicSponge + Default,
-    SV: CryptographicSpongeVar<CF, S>,
+    SV: CryptographicSpongeVar<CF, S> + Default,
 {
     pub const PROTOCOL_NAME: &'static [u8] = b"MARLIN-2019";
 
@@ -115,7 +115,7 @@ where
         for (label, point) in evaluations_labels.iter() {
             if label != "outer_sumcheck" && label != "inner_sumcheck" {
                 let nonnative_point = evaluations.get_lc_eval(label, point).unwrap();
-                let point = nonnative_point.to_constraint_field().unwrap();
+                let mut point = nonnative_point.to_constraint_field().unwrap();
                 evals_vec.append(&mut point);
             }
         }

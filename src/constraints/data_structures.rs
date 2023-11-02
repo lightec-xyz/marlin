@@ -1,4 +1,5 @@
 use crate::ahp::prover::ProverMsg;
+use crate::to_bytes;
 use crate::{
     constraints::verifier::Marlin as MarlinVerifierVar,
     data_structures::{IndexVerifierKey, PreparedIndexVerifierKey, Proof},
@@ -13,7 +14,7 @@ use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     fields::{fp::FpVar, nonnative::NonNativeFieldVar},
     uint8::UInt8,
-    R1CSVar, ToBytesGadget, ToConstraintFieldGadget,
+    ToBytesGadget, ToConstraintFieldGadget,
 };
 use ark_relations::r1cs::{ConstraintSystemRef, Namespace};
 use ark_std::borrow::Borrow;
@@ -225,44 +226,28 @@ where
     PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
     PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
     S: CryptographicSponge + Default,
-    SV: CryptographicSpongeVar<CF, S>,
+    SV: CryptographicSpongeVar<CF, S> + Default,
     PCG::VerifierKeyVar: ToConstraintFieldGadget<CF>,
     PCG::CommitmentVar: ToConstraintFieldGadget<CF>,
 {
     #[tracing::instrument(target = "r1cs", skip(vk))]
     pub fn prepare(vk: &IndexVerifierKeyVar<F, CF, PC, PCG, S>) -> Result<Self, SynthesisError> {
-        let cs = vk.cs();
-
-        let mut fs_rng_raw = S::default();
-        fs_rng_raw
-            .absorb(&MarlinVerifierVar::<F, CF, PC, PCG, S, SV>::PROTOCOL_NAME);
-
         let index_vk_hash = {
-            let mut vk_hash_rng = S::default();
-
-            let mut vk_elems = Vec::<CF>::new();
+            let mut sponge_var = SV::default();
             vk.index_comms.iter().for_each(|index_comm| {
-                vk_elems.append(
-                    &mut index_comm
-                        .to_constraint_field()
-                        .unwrap()
-                        .iter()
-                        .map(|elem| elem.value().unwrap_or_default())
-                        .collect(),
-                );
+                let _ = index_comm
+                    .to_constraint_field()
+                    .unwrap()
+                    .iter()
+                    .map(|elem| sponge_var.absorb(elem));
             });
-            vk_hash_rng.absorb_native_field_elements(&vk_elems);
-            FpVar::<CF>::new_witness(ark_relations::ns!(cs, "alloc#vk_hash"), || {
-                Ok(vk_hash_rng.squeeze_native_field_elements(1)[0])
-            })
-            .unwrap()
+            &sponge_var.squeeze_field_elements(1)?[0]
         };
 
-        let fs_rng = {
-            let mut fs_rng = SV::constant(cs, &fs_rng_raw);
-            fs_rng.absorb_native_field_elements(&[index_vk_hash])?;
-            fs_rng
-        };
+        let protocol_var = UInt8::<CF>::constant_vec(&MarlinVerifierVar::<F, CF, PC, PCG, S, SV>::PROTOCOL_NAME);
+        let mut fs_rng = SV::default();
+        fs_rng.absorb(&protocol_var)?;
+        fs_rng.absorb(&index_vk_hash)?;
 
         let mut prepared_index_comms = Vec::<PCG::PreparedCommitmentVar>::new();
         for comm in vk.index_comms.iter() {
@@ -293,7 +278,7 @@ where
     PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
     PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
     S: CryptographicSponge + Default,
-    SV: CryptographicSpongeVar<CF, S>,
+    SV: CryptographicSpongeVar<CF, S> + Default,
     PC::VerifierKey: ToConstraintField<CF>,
     PC::Commitment: ToConstraintField<CF>,
     PCG::VerifierKeyVar: ToConstraintFieldGadget<CF>,
@@ -337,24 +322,19 @@ where
         let index_vk_hash = {
             let mut vk_hash_rng = S::default();
 
-            vk_hash_rng.absorb_native_field_elements(&vk_elems);
+            vk_hash_rng.absorb(&to_bytes(&vk_elems));
             FpVar::<CF>::new_variable(
                 ark_relations::ns!(cs, "alloc#vk_hash"),
-                || Ok(vk_hash_rng.squeeze_native_field_elements(1)[0]),
+                || Ok(vk_hash_rng.squeeze_field_elements::<CF>(1)[0]),
                 mode,
             )
             .unwrap()
         };
 
-        let mut fs_rng_raw = S::default();
-        fs_rng_raw
-            .absorb(&MarlinVerifierVar::<F, CF, PC, PCG, S, SV>::PROTOCOL_NAME);
-
-        let fs_rng = {
-            let mut fs_rng = SV::constant(cs.clone(), &fs_rng_raw);
-            fs_rng.absorb_native_field_elements(&[index_vk_hash])?;
-            fs_rng
-        };
+        let protocol_var = UInt8::<CF>::constant_vec(&MarlinVerifierVar::<F, CF, PC, PCG, S, SV>::PROTOCOL_NAME);
+        let mut fs_rng = SV::default();
+        fs_rng.absorb(&protocol_var)?;
+        fs_rng.absorb(&index_vk_hash)?;
 
         let domain_h_size_gadget = FpVar::<CF>::new_variable(
             ark_relations::ns!(cs, "domain_h_size"),
