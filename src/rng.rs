@@ -5,7 +5,7 @@ use ark_crypto_primitives::sponge::poseidon::{
 use ark_crypto_primitives::sponge::{Absorb, CryptographicSponge};
 use ark_ff::PrimeField;
 
-use ark_std::rand::RngCore;
+use ark_std::rand::{RngCore, CryptoRng};
 
 /// A simple `FiatShamirRng` that refreshes its seed by hashing together the previous seed
 /// and the new seed material.
@@ -13,6 +13,8 @@ use ark_std::rand::RngCore;
 
 #[derive(Clone)]
 pub struct SimplePoseidonRng<F: PrimeField>(PoseidonSponge<F>);
+
+impl<F: PrimeField> CryptoRng for SimplePoseidonRng<F>{}
 
 impl<F: PrimeField> RngCore for SimplePoseidonRng<F> {
     #[inline]

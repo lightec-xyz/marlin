@@ -233,7 +233,7 @@ where
     #[tracing::instrument(target = "r1cs", skip(vk))]
     pub fn prepare(vk: &IndexVerifierKeyVar<F, CF, PC, PCG, S>) -> Result<Self, SynthesisError> {
         let index_vk_hash = {
-            let mut sponge_var = SV::default();
+            let mut sponge_var = SV::default().replace_cs(vk.cs());
             vk.index_comms.iter().for_each(|index_comm| {
                 let _ = index_comm
                     .to_constraint_field()
@@ -245,7 +245,7 @@ where
         };
 
         let protocol_var = UInt8::<CF>::constant_vec(&MarlinVerifierVar::<F, CF, PC, PCG, S, SV>::PROTOCOL_NAME);
-        let mut fs_rng = SV::default();
+        let mut fs_rng = SV::default().replace_cs(vk.cs.clone());
         fs_rng.absorb(&protocol_var)?;
         fs_rng.absorb(&index_vk_hash)?;
 
@@ -332,7 +332,7 @@ where
         };
 
         let protocol_var = UInt8::<CF>::constant_vec(&MarlinVerifierVar::<F, CF, PC, PCG, S, SV>::PROTOCOL_NAME);
-        let mut fs_rng = SV::default();
+        let mut fs_rng = SV::default().replace_cs(cs.clone());
         fs_rng.absorb(&protocol_var)?;
         fs_rng.absorb(&index_vk_hash)?;
 

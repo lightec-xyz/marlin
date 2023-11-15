@@ -6,13 +6,10 @@ mod tests {
             data_structures::{IndexVerifierKeyVar, ProofVar, ProverMsgVar},
             verifier::Marlin,
         },
-        fiat_shamir::{
-            constraints::FiatShamirAlgebraicSpongeRngVar, poseidon::constraints::PoseidonSpongeVar,
-            poseidon::PoseidonSponge, FiatShamirAlgebraicSpongeRng,
-        },
         Marlin as MarlinNative, MarlinRecursiveConfig, Proof,
     };
-    use ark_ec::{CurveCycle, PairingEngine, PairingFriendlyCycle};
+    use ark_crypto_primitives::sponge::poseidon::{PoseidonSponge, constraints::PoseidonSpongeVar};
+    use ark_ec::{CurveCycle, pairing::Pairing, PairingFriendlyCycle};
     use ark_ff::{Field, UniformRand};
     use ark_mnt4_298::{constraints::PairingVar as MNT4PairingVar, Fq, Fr, MNT4_298};
     use ark_mnt6_298::MNT6_298;
@@ -20,7 +17,7 @@ mod tests {
     use ark_poly_commit::marlin_pc::{
         BatchLCProofVar, CommitmentVar, MarlinKZG10, MarlinKZG10Gadget,
     };
-    use ark_r1cs_std::{alloc::AllocVar, bits::boolean::Boolean, eq::EqGadget, fields::nonnative::NonNativeFieldVar};
+    use ark_r1cs_std::{alloc::AllocVar, bits::boolean::Boolean, fields::nonnative::NonNativeFieldVar, eq::EqGadget};
     use ark_relations::r1cs::OptimizationGoal;
     use ark_relations::{
         lc, ns,
@@ -40,11 +37,12 @@ mod tests {
         type Engine2 = MNT4_298;
     }
 
-    type FS = FiatShamirAlgebraicSpongeRng<Fr, Fq, PoseidonSponge<Fq>>;
-    type MultiPC = MarlinKZG10<MNT4_298, DensePolynomial<Fr>>;
-    type MarlinNativeInst = MarlinNative<Fr, Fq, MultiPC, FS, MarlinRecursiveConfig>;
+    type S = PoseidonSponge<Fq>;
+    type SV = PoseidonSpongeVar<Fq>;
+    type MultiPC = MarlinKZG10<MNT4_298, DensePolynomial<Fr>, S>;
+    type MarlinNativeInst = MarlinNative<Fr, Fq, MultiPC, S, MarlinRecursiveConfig>;
 
-    type MultiPCVar = MarlinKZG10Gadget<MNT298Cycle, DensePolynomial<Fr>, MNT4PairingVar>;
+    type MultiPCVar = MarlinKZG10Gadget<MNT298Cycle, DensePolynomial<Fr>, MNT4PairingVar, S>;
 
     #[derive(Copy, Clone)]
     struct Circuit<F: Field> {
@@ -105,13 +103,13 @@ mod tests {
         let (index_pk, index_vk) = MarlinNativeInst::index(&universal_srs, circ).unwrap();
         println!("Called index");
 
-        let proof = MarlinNativeInst::prove(&index_pk, circ, rng).unwrap();
+        let proof = MarlinNativeInst::prove::<Circuit<Fr>, S>(&index_pk, circ, &mut PoseidonSponge::default()).unwrap();
         println!("Called prover");
 
-        assert!(MarlinNativeInst::verify(&index_vk, &[c], &proof).unwrap());
+        assert!(MarlinNativeInst::verify::<S>(&index_vk, &[c], &proof, &mut PoseidonSponge::default()).unwrap());
         println!("Called verifier");
         println!("\nShould not verify (i.e. verifier messages should print below):");
-        assert!(!MarlinNativeInst::verify(&index_vk, &[a], &proof).unwrap());
+        assert!(!MarlinNativeInst::verify::<S>(&index_vk, &[a], &proof, &mut PoseidonSponge::default()).unwrap());
 
         // Native works; now convert to the constraint world!
 
@@ -120,7 +118,7 @@ mod tests {
         cs.set_optimization_goal(OptimizationGoal::Weight);
 
         // BEGIN: ivk to ivk_gadget
-        let ivk_gadget: IndexVerifierKeyVar<Fr, Fq, MultiPC, MultiPCVar> =
+        let ivk_gadget: IndexVerifierKeyVar<Fr, Fq, MultiPC, MultiPCVar, S> =
             IndexVerifierKeyVar::new_witness(ns!(cs, "alloc#index vk"), || Ok(index_vk)).unwrap();
         // END: ivk to ivk_gadget
 
@@ -186,7 +184,7 @@ mod tests {
             .collect();
 
         let pc_batch_proof =
-            BatchLCProofVar::<MNT298Cycle, DensePolynomial<Fr>, MNT4PairingVar>::new_witness(
+            BatchLCProofVar::<MNT298Cycle, DensePolynomial<Fr>, MNT4PairingVar, S>::new_witness(
                 ns!(cs, "alloc#proof"),
                 || Ok(pc_proof),
             )
@@ -211,7 +209,7 @@ mod tests {
             evaluation_gadgets.insert(s.to_string(), (*eval).clone());
         }
 
-        let proof_gadget: ProofVar<Fr, Fq, MultiPC, MultiPCVar> = ProofVar {
+        let proof_gadget: ProofVar<Fr, Fq, MultiPC, MultiPCVar, S> = ProofVar {
             cs: cs.clone(),
             commitments: commitment_gadgets,
             evaluations: evaluation_gadgets,
@@ -220,13 +218,10 @@ mod tests {
         };
         // END: proof to proof_gadget
 
-        Marlin::<Fr, Fq, MultiPC, MultiPCVar>::verify::<
-            FiatShamirAlgebraicSpongeRng<Fr, Fq, PoseidonSponge<Fq>>,
-            FiatShamirAlgebraicSpongeRngVar<Fr, Fq, PoseidonSponge<Fq>, PoseidonSpongeVar<Fq>>,
-        >(&ivk_gadget, &public_input_gadget, &proof_gadget)
-        .unwrap()
-        .enforce_equal(&Boolean::Constant(true))
-        .unwrap();
+        Marlin::<Fr, Fq, MultiPC, MultiPCVar, S, SV>::verify(&ivk_gadget, &public_input_gadget, &proof_gadget)
+            .unwrap()
+            .enforce_equal(&Boolean::Constant(true))
+            .unwrap();
 
         println!(
             "after Marlin, num_of_constraints = {}",
