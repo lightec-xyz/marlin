@@ -5,11 +5,9 @@ use crate::{
         lagrange_interpolation::LagrangeInterpolationVar,
         polynomial::AlgebraForAHP,
     },
-    fiat_shamir::{constraints::FiatShamirRngVar, FiatShamirRng},
     PhantomData, PrimeField, String, ToString, Vec,
 };
-use ark_nonnative_field::params::OptimizationType;
-use ark_nonnative_field::NonNativeFieldVar;
+use ark_crypto_primitives::sponge::{CryptographicSponge, constraints::CryptographicSpongeVar};
 use ark_poly::univariate::DensePolynomial;
 use ark_poly_commit::{
     EvaluationsVar, LCTerm, LabeledPointVar, LinearCombinationCoeffVar, LinearCombinationVar,
@@ -19,7 +17,7 @@ use ark_r1cs_std::{
     alloc::AllocVar,
     bits::boolean::Boolean,
     eq::EqGadget,
-    fields::{fp::FpVar, FieldVar},
+    fields::{fp::FpVar, FieldVar, nonnative::NonNativeFieldVar},
     ToBitsGadget, ToConstraintFieldGadget,
 };
 use ark_relations::r1cs::ConstraintSystemRef;
@@ -57,8 +55,10 @@ pub struct VerifierThirdMsgVar<TargetField: PrimeField, BaseField: PrimeField> {
 pub struct AHPForR1CS<
     F: PrimeField,
     CF: PrimeField,
-    PC: PolynomialCommitment<F, DensePolynomial<F>>,
-    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
+    PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+    PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+    S: CryptographicSponge,
+    SV: CryptographicSpongeVar<CF, S>,
 > where
     PCG::VerifierKeyVar: ToConstraintFieldGadget<CF>,
     PCG::CommitmentVar: ToConstraintFieldGadget<CF>,
@@ -67,14 +67,18 @@ pub struct AHPForR1CS<
     constraint_field: PhantomData<CF>,
     polynomial_commitment: PhantomData<PC>,
     pc_check: PhantomData<PCG>,
+    sponge: PhantomData<S>,
+    sponge_var: PhantomData<SV>,
 }
 
 impl<
         F: PrimeField,
         CF: PrimeField,
-        PC: PolynomialCommitment<F, DensePolynomial<F>>,
-        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF>,
-    > AHPForR1CS<F, CF, PC, PCG>
+        PC: PolynomialCommitment<F, DensePolynomial<F>, S>,
+        PCG: PCCheckVar<F, DensePolynomial<F>, PC, CF, S>,
+        S: CryptographicSponge,
+        SV: CryptographicSpongeVar<CF, S>,
+    > AHPForR1CS<F, CF, PC, PCG, S, SV>
 where
     PCG::VerifierKeyVar: ToConstraintFieldGadget<CF>,
     PCG::CommitmentVar: ToConstraintFieldGadget<CF>,
@@ -84,12 +88,10 @@ where
     #[allow(clippy::type_complexity)]
     pub fn verifier_first_round<
         CommitmentVar: ToConstraintFieldGadget<CF>,
-        PR: FiatShamirRng<F, CF>,
-        R: FiatShamirRngVar<F, CF, PR>,
     >(
         domain_h_size: u64,
         domain_k_size: u64,
-        fs_rng: &mut R,
+        fs_rng: &mut SV,
         comms: &[CommitmentVar],
         message: &[NonNativeFieldVar<F, CF>],
     ) -> Result<(VerifierFirstMsgVar<F, CF>, VerifierStateVar<F, CF>), Error> {
@@ -99,12 +101,17 @@ where
             comms.iter().for_each(|comm| {
                 elems.append(&mut comm.to_constraint_field().unwrap());
             });
-            fs_rng.absorb_native_field_elements(&elems)?;
-            fs_rng.absorb_nonnative_field_elements(&message, OptimizationType::Weight)?;
+            fs_rng.absorb(&elems)?;
+
+            let mut msgs = Vec::<FpVar<CF>>::new();
+            message.iter().for_each(|msg| {
+                msgs.append(&mut msg.to_constraint_field().unwrap());
+            });
+            fs_rng.absorb(&msgs)?;
         }
 
         // obtain four elements from the sponge
-        let elems = fs_rng.squeeze_field_elements(4)?;
+        let elems = fs_rng.squeeze_nonnative_field_elements::<F>(4)?.0;
         let alpha = elems[0].clone();
         let eta_a = elems[1].clone();
         let eta_b = elems[2].clone();
@@ -132,11 +139,9 @@ where
     #[allow(clippy::type_complexity)]
     pub fn verifier_second_round<
         CommitmentVar: ToConstraintFieldGadget<CF>,
-        PR: FiatShamirRng<F, CF>,
-        R: FiatShamirRngVar<F, CF, PR>,
     >(
         state: VerifierStateVar<F, CF>,
-        fs_rng: &mut R,
+        fs_rng: &mut SV,
         comms: &[CommitmentVar],
         message: &[NonNativeFieldVar<F, CF>],
     ) -> Result<(VerifierSecondMsgVar<F, CF>, VerifierStateVar<F, CF>), Error> {
@@ -153,12 +158,17 @@ where
             comms.iter().for_each(|comm| {
                 elems.append(&mut comm.to_constraint_field().unwrap());
             });
-            fs_rng.absorb_native_field_elements(&elems)?;
-            fs_rng.absorb_nonnative_field_elements(&message, OptimizationType::Weight)?;
+            fs_rng.absorb(&elems)?;
+
+            let mut msgs = Vec::<FpVar<CF>>::new();
+            message.iter().for_each(|msg| {
+                msgs.append(&mut msg.to_constraint_field().unwrap());
+            });
+            fs_rng.absorb(&msgs)?;
         }
 
         // obtain one element from the sponge
-        let elems = fs_rng.squeeze_field_elements(1)?;
+        let elems = fs_rng.squeeze_nonnative_field_elements(1)?.0;
         let beta = elems[0].clone();
 
         let msg = VerifierSecondMsgVar { beta };
@@ -177,11 +187,9 @@ where
     #[tracing::instrument(target = "r1cs", skip(state, fs_rng, comms))]
     pub fn verifier_third_round<
         CommitmentVar: ToConstraintFieldGadget<CF>,
-        PR: FiatShamirRng<F, CF>,
-        R: FiatShamirRngVar<F, CF, PR>,
     >(
         state: VerifierStateVar<F, CF>,
-        fs_rng: &mut R,
+        fs_rng: &mut SV,
         comms: &[CommitmentVar],
         message: &[NonNativeFieldVar<F, CF>],
     ) -> Result<VerifierStateVar<F, CF>, Error> {
@@ -199,12 +207,17 @@ where
             comms.iter().for_each(|comm| {
                 elems.append(&mut comm.to_constraint_field().unwrap());
             });
-            fs_rng.absorb_native_field_elements(&elems)?;
-            fs_rng.absorb_nonnative_field_elements(&message, OptimizationType::Weight)?;
+            fs_rng.absorb(&elems)?;
+
+            let mut msgs = Vec::<FpVar<CF>>::new();
+            message.iter().for_each(|msg| {
+                msgs.append(&mut msg.to_constraint_field().unwrap());
+            });
+            fs_rng.absorb(&msgs)?;
         }
 
         // obtain one element from the sponge
-        let elems = fs_rng.squeeze_field_elements(1)?;
+        let elems = fs_rng.squeeze_nonnative_field_elements(1)?.0;
         let gamma = elems[0].clone();
 
         let new_state = VerifierStateVar {
@@ -287,7 +300,7 @@ where
         let x_padded_len = public_input.len().next_power_of_two() as u64;
 
         let mut interpolation_gadget = LagrangeInterpolationVar::<F, CF>::new(
-            F::get_root_of_unity(x_padded_len as usize).unwrap(),
+            F::get_root_of_unity(x_padded_len).unwrap(),
             x_padded_len,
             public_input,
         );
@@ -525,12 +538,9 @@ where
 
     #[tracing::instrument(target = "r1cs", skip(index_pvk, proof, state))]
     #[allow(clippy::type_complexity)]
-    pub fn verifier_comm_query_eval_set<
-        PR: FiatShamirRng<F, CF>,
-        R: FiatShamirRngVar<F, CF, PR>,
-    >(
-        index_pvk: &PreparedIndexVerifierKeyVar<F, CF, PC, PCG, PR, R>,
-        proof: &ProofVar<F, CF, PC, PCG>,
+    pub fn verifier_comm_query_eval_set(
+        index_pvk: &PreparedIndexVerifierKeyVar<F, CF, PC, PCG, S, SV>,
+        proof: &ProofVar<F, CF, PC, PCG, S>,
         state: &VerifierStateVar<F, CF>,
     ) -> Result<
         (

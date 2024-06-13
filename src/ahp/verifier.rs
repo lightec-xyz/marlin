@@ -2,10 +2,11 @@
 
 use crate::ahp::indexer::IndexInfo;
 use crate::ahp::*;
+use ark_crypto_primitives::sponge::CryptographicSponge;
+use ark_std::rand::RngCore;
+use itertools::Itertools;
 
-use crate::fiat_shamir::FiatShamirRng;
 use ark_ff::PrimeField;
-use ark_nonnative_field::params::OptimizationType;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_poly_commit::QuerySet;
 
@@ -42,26 +43,28 @@ pub struct VerifierSecondMsg<F> {
 
 impl<F: PrimeField> AHPForR1CS<F> {
     /// Output the first message and next round state.
-    pub fn verifier_first_round<FSF: PrimeField, R: FiatShamirRng<F, FSF>>(
+    pub fn verifier_first_round<R: CryptographicSponge + RngCore>(
         index_info: IndexInfo<F>,
-        fs_rng: &mut R,
+        rng: &mut R,
     ) -> Result<(VerifierFirstMsg<F>, VerifierState<F>), Error> {
         if index_info.num_constraints != index_info.num_variables {
             return Err(Error::NonSquareMatrix);
         }
 
-        let domain_h = GeneralEvaluationDomain::new(index_info.num_constraints)
-            .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
+        let domain_h: GeneralEvaluationDomain<F> =
+            GeneralEvaluationDomain::new(index_info.num_constraints)
+                .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
 
         let domain_k = GeneralEvaluationDomain::new(index_info.num_non_zero)
             .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
 
-        let elems = fs_rng.squeeze_nonnative_field_elements(4, OptimizationType::Weight);
-        let alpha = elems[0];
-        let eta_a = elems[1];
-        let eta_b = elems[2];
-        let eta_c = elems[3];
-        assert!(!domain_h.evaluate_vanishing_polynomial(alpha).is_zero());
+        let alpha = domain_h.sample_element_outside_domain(rng).to_owned();
+        let (eta_a, eta_b, eta_c) = rng
+            .squeeze_field_elements(3)
+            .iter()
+            .map(|x: &F| x.to_owned())
+            .collect_tuple()
+            .unwrap();
 
         let msg = VerifierFirstMsg {
             alpha,
@@ -82,14 +85,11 @@ impl<F: PrimeField> AHPForR1CS<F> {
     }
 
     /// Output the second message and next round state.
-    pub fn verifier_second_round<FSF: PrimeField, R: FiatShamirRng<F, FSF>>(
+    pub fn verifier_second_round<R: RngCore>(
         mut state: VerifierState<F>,
-        fs_rng: &mut R,
+        rng: &mut R,
     ) -> (VerifierSecondMsg<F>, VerifierState<F>) {
-        let elems = fs_rng.squeeze_nonnative_field_elements(1, OptimizationType::Weight);
-        let beta = elems[0];
-        assert!(!state.domain_h.evaluate_vanishing_polynomial(beta).is_zero());
-
+        let beta = state.domain_h.sample_element_outside_domain(rng);
         let msg = VerifierSecondMsg { beta };
         state.second_round_msg = Some(msg);
 
@@ -97,19 +97,17 @@ impl<F: PrimeField> AHPForR1CS<F> {
     }
 
     /// Output the third message and next round state.
-    pub fn verifier_third_round<FSF: PrimeField, R: FiatShamirRng<F, FSF>>(
+    pub fn verifier_third_round<R: CryptographicSponge>(
         mut state: VerifierState<F>,
-        fs_rng: &mut R,
+        rng: &mut R,
     ) -> VerifierState<F> {
-        let elems = fs_rng.squeeze_nonnative_field_elements(1, OptimizationType::Weight);
-        let gamma = elems[0];
-
-        state.gamma = Some(gamma);
+        let gamma = rng.squeeze_field_elements(1).pop();
+        state.gamma = gamma;
         state
     }
 
     /// Output the query state and next round state.
-    pub fn verifier_query_set<'a, FSF: PrimeField, R: FiatShamirRng<F, FSF>>(
+    pub fn verifier_query_set<'a, R: RngCore>(
         state: VerifierState<F>,
         _: &'a mut R,
         with_vanishing: bool,
@@ -157,44 +155,26 @@ impl<F: PrimeField> AHPForR1CS<F> {
         // = a(gamma) - b(gamma) * (gamma g_2(gamma) + t(beta) / |K|)
         //
         // where
-        //   a(X) := sum_M (eta_M v_H(beta) v_H(alpha) val_M(X) prod_N (beta - row_N(X)) (alpha - col_N(X)))
-        //   b(X) := prod_M (beta - row_M(X)) (alpha - col_M(X))
-        //
-        // We define "n_denom" := prod_N (beta - row_N(X)) (alpha - col_N(X)))
+        //   a(X) := sum_M (eta_M v_H(beta) v_H(alpha) val_M(X))
+        //   b(X) := (beta - row(X)) (alpha - col(X))
         //
         // LinearCombination::new("g_2", vec![(F::one(), g_2)]);
         //
         // LinearCombination::new(
-        //     "a_denom".into(),
+        //     "denom".into(),
         //     vec![
         //         (alpha * beta, LCTerm::One),
-        //         (-alpha, "a_row"),
-        //         (-beta, "a_col"),
-        //         (F::one(), "a_row_col"),
-        // ]);
-        // LinearCombination::new(
-        //     "b_denom".into(),
-        //     vec![
-        //         (alpha * beta, LCTerm::One),
-        //         (-alpha, "b_row"),
-        //         (-beta, "b_col"),
-        //         (F::one(), "b_row_col"),
-        // ]);
-        // LinearCombination::new(
-        //     "c_denom".into(),
-        //     vec![
-        //         (alpha * beta, LCTerm::one()),
-        //         (-alpha, "c_row"),
-        //         (-beta, "c_col"),
-        //         (F::one(), "c_row_col"),
+        //         (-alpha, "row"),
+        //         (-beta, "col"),
+        //         (F::one(), "row_col"),
         // ]);
         //
         // LinearCombination::new(
         //     "a_poly".into(),
         //     vec![
-        //          (eta_a * b_denom_at_gamma * c_denom_at_gamma, "a_val".into()),
-        //          (eta_b * a_denom_at_gamma * c_denom_at_gamma, "b_val".into()),
-        //          (eta_c * b_denom_at_gamma * a_denom_at_gamma, "c_val".into()),
+        //          (eta_a * "a_val".into()),
+        //          (eta_b * "b_val".into()),
+        //          (eta_c * "c_val".into()),
         //     ],
         // )
         //
@@ -203,16 +183,13 @@ impl<F: PrimeField> AHPForR1CS<F> {
         // let v_K_at_gamma = domain_k.evaluate_vanishing_polynomial(gamma);
         //
         // let a_poly_lc *= v_H_at_alpha * v_H_at_beta;
-        // let b_lc = LinearCombination::new("b_poly", vec![(a_denom_at_gamma * b_denom_at_gamma * c_denom_at_gamma, "one")]);
+        // let b_lc = denom
         // let h_lc = LinearCombination::new("b_poly", vec![(v_K_at_gamma, "h_2")]);
         //
         // // This LC is the only one that is evaluated:
         // let inner_sumcheck = a_poly_lc - (b_lc * (gamma * &g_2_at_gamma + &(t_at_beta / &k_size))) - h_lc
         // main_lc.set_label("inner_sumcheck");
         query_set.insert(("g_2".into(), ("gamma".into(), gamma)));
-        query_set.insert(("a_denom".into(), ("gamma".into(), gamma)));
-        query_set.insert(("b_denom".into(), ("gamma".into(), gamma)));
-        query_set.insert(("c_denom".into(), ("gamma".into(), gamma)));
         query_set.insert(("inner_sumcheck".into(), ("gamma".into(), gamma)));
 
         if with_vanishing {

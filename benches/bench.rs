@@ -3,9 +3,10 @@
 // where N is the number of threads you want to use (N = 1 for single-thread).
 
 use ark_bls12_381::{Bls12_381, Fq as BlsFq, Fr as BlsFr};
+
+use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ff::PrimeField;
-use ark_marlin::fiat_shamir::FiatShamirChaChaRng;
-use ark_marlin::Marlin;
+use ark_marlin::{Marlin, SimplePoseidonRng};
 use ark_marlin::MarlinDefaultConfig;
 use ark_mnt4_298::{Fq as MNT4Fq, Fr as MNT4Fr, MNT4_298};
 use ark_mnt4_753::{Fq as MNT4BigFq, Fr as MNT4BigFr, MNT4_753};
@@ -17,8 +18,8 @@ use ark_relations::{
     lc,
     r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
 };
-use ark_std::{ops::Mul, UniformRand};
-use blake2::Blake2s;
+use ark_std::rand::RngCore;
+use itertools::Itertools;
 
 const NUM_PROVE_REPEATITIONS: usize = 10;
 const NUM_VERIFY_REPEATITIONS: usize = 50;
@@ -69,10 +70,18 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for DummyCircuit<F> {
 
 macro_rules! marlin_prove_bench {
     ($bench_name:ident, $bench_field:ty, $base_field:ty, $bench_pairing_engine:ty) => {
-        let rng = &mut ark_std::test_rng();
+        let mut rng_seed = ark_std::test_rng();
+        let mut rng: SimplePoseidonRng<$bench_field> = SimplePoseidonRng::default();
+        rng.absorb(&rng_seed.next_u64());
+        let (a, b) = rng
+            .squeeze_field_elements(2)
+            .iter()
+            .map(|x: &$bench_field| x.to_owned())
+            .collect_tuple()
+            .unwrap();
         let c = DummyCircuit::<$bench_field> {
-            a: Some(<$bench_field>::rand(rng)),
-            b: Some(<$bench_field>::rand(rng)),
+            a: Some(a),
+            b: Some(b),
             num_variables: 10,
             num_constraints: 65536,
         };
@@ -80,16 +89,24 @@ macro_rules! marlin_prove_bench {
         let srs = Marlin::<
             $bench_field,
             $base_field,
-            MarlinKZG10<$bench_pairing_engine, DensePolynomial<$bench_field>>,
-            FiatShamirChaChaRng<$bench_field, $base_field, Blake2s>,
+            MarlinKZG10<
+                $bench_pairing_engine,
+                DensePolynomial<$bench_field>,
+                SimplePoseidonRng<$bench_field>,
+            >,
+            SimplePoseidonRng<$bench_field>,
             MarlinDefaultConfig,
-        >::universal_setup(65536, 65536, 65536, rng)
+        >::universal_setup(65536, 65536, 3 * 65536, &mut rng)
         .unwrap();
         let (pk, _) = Marlin::<
             $bench_field,
             $base_field,
-            MarlinKZG10<$bench_pairing_engine, DensePolynomial<$bench_field>>,
-            FiatShamirChaChaRng<$bench_field, $base_field, Blake2s>,
+            MarlinKZG10<
+                $bench_pairing_engine,
+                DensePolynomial<$bench_field>,
+                SimplePoseidonRng<$bench_field>,
+            >,
+            SimplePoseidonRng<$bench_field>,
             MarlinDefaultConfig,
         >::index(&srs, c)
         .unwrap();
@@ -100,10 +117,14 @@ macro_rules! marlin_prove_bench {
             let _ = Marlin::<
                 $bench_field,
                 $base_field,
-                MarlinKZG10<$bench_pairing_engine, DensePolynomial<$bench_field>>,
-                FiatShamirChaChaRng<$bench_field, $base_field, Blake2s>,
+                MarlinKZG10<
+                    $bench_pairing_engine,
+                    DensePolynomial<$bench_field>,
+                    SimplePoseidonRng<$bench_field>,
+                >,
+                SimplePoseidonRng<$bench_field>,
                 MarlinDefaultConfig,
-            >::prove(&pk, c.clone(), rng)
+            >::prove(&pk, c.clone(), &mut rng)
             .unwrap();
         }
 
@@ -117,10 +138,18 @@ macro_rules! marlin_prove_bench {
 
 macro_rules! marlin_verify_bench {
     ($bench_name:ident, $bench_field:ty, $base_field:ty, $bench_pairing_engine:ty) => {
-        let rng = &mut ark_std::test_rng();
+        let mut rng_seed = ark_std::test_rng();
+        let mut rng: SimplePoseidonRng<$bench_field> = SimplePoseidonRng::default();
+        rng.absorb(&rng_seed.next_u64());
+        let (a, b) = rng
+            .squeeze_field_elements(2)
+            .iter()
+            .map(|x: &$bench_field| x.to_owned())
+            .collect_tuple()
+            .unwrap();
         let c = DummyCircuit::<$bench_field> {
-            a: Some(<$bench_field>::rand(rng)),
-            b: Some(<$bench_field>::rand(rng)),
+            a: Some(a),
+            b: Some(b),
             num_variables: 10,
             num_constraints: 65536,
         };
@@ -128,29 +157,41 @@ macro_rules! marlin_verify_bench {
         let srs = Marlin::<
             $bench_field,
             $base_field,
-            MarlinKZG10<$bench_pairing_engine, DensePolynomial<$bench_field>>,
-            FiatShamirChaChaRng<$bench_field, $base_field, Blake2s>,
+            MarlinKZG10<
+                $bench_pairing_engine,
+                DensePolynomial<$bench_field>,
+                SimplePoseidonRng<$bench_field>,
+            >,
+            SimplePoseidonRng<$bench_field>,
             MarlinDefaultConfig,
-        >::universal_setup(65536, 65536, 65536, rng)
+        >::universal_setup(65536, 65536, 3 * 65536, &mut rng)
         .unwrap();
         let (pk, vk) = Marlin::<
             $bench_field,
             $base_field,
-            MarlinKZG10<$bench_pairing_engine, DensePolynomial<$bench_field>>,
-            FiatShamirChaChaRng<$bench_field, $base_field, Blake2s>,
+            MarlinKZG10<
+                $bench_pairing_engine,
+                DensePolynomial<$bench_field>,
+                SimplePoseidonRng<$bench_field>,
+            >,
+            SimplePoseidonRng<$bench_field>,
             MarlinDefaultConfig,
         >::index(&srs, c)
         .unwrap();
         let proof = Marlin::<
             $bench_field,
             $base_field,
-            MarlinKZG10<$bench_pairing_engine, DensePolynomial<$bench_field>>,
-            FiatShamirChaChaRng<$bench_field, $base_field, Blake2s>,
+            MarlinKZG10<
+                $bench_pairing_engine,
+                DensePolynomial<$bench_field>,
+                SimplePoseidonRng<$bench_field>,
+            >,
+            SimplePoseidonRng<$bench_field>,
             MarlinDefaultConfig,
-        >::prove(&pk, c.clone(), rng)
+        >::prove(&pk, c.clone(), &mut rng)
         .unwrap();
 
-        let v = c.a.unwrap().mul(c.b.unwrap());
+        let v = a * b;
 
         let start = ark_std::time::Instant::now();
 
@@ -158,10 +199,14 @@ macro_rules! marlin_verify_bench {
             let _ = Marlin::<
                 $bench_field,
                 $base_field,
-                MarlinKZG10<$bench_pairing_engine, DensePolynomial<$bench_field>>,
-                FiatShamirChaChaRng<$bench_field, $base_field, Blake2s>,
+                MarlinKZG10<
+                    $bench_pairing_engine,
+                    DensePolynomial<$bench_field>,
+                    SimplePoseidonRng<$bench_field>,
+                >,
+                SimplePoseidonRng<$bench_field>,
                 MarlinDefaultConfig,
-            >::verify(&vk, &vec![v], &proof)
+            >::verify(&vk, &vec![v], &proof, &mut rng)
             .unwrap();
         }
 
